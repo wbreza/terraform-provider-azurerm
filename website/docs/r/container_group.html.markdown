@@ -47,8 +47,8 @@ resource "azurerm_container_group" "aci-helloworld" {
   container {
     name   = "hw"
     image  = "seanmckenna/aci-hellofiles"
-    cpu    ="0.5"
-    memory =  "1.5"
+    cpu    = "0.5"
+    memory = "1.5"
     port   = "80"
 
     environment_variables {

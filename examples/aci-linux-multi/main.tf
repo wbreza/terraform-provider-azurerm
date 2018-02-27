@@ -16,13 +16,14 @@ resource "azurerm_container_group" "aci-example" {
     ip_address_type     = "public"
     dns_name_label      = "my-aci-cg-${random_integer.random_int.result}"
     os_type             = "linux"
+    protocol            = "tcp"
 
     container {
-        name    = "hw"
-        image   = "microsoft/aci-helloworld:latest"
-        cpu     = "0.5"
-        memory  = "1.5"
-        port    = "80"
+        name     = "hw"
+        image    = "microsoft/aci-helloworld:latest"
+        cpu      = "0.5"
+        memory   = "1.5"
+        ports    = ["80", "81"]
     }
 
     container {
@@ -30,6 +31,7 @@ resource "azurerm_container_group" "aci-example" {
         image   = "microsoft/aci-tutorial-sidecar"
         cpu     = "0.5"
         memory  = "1.5"
+        ports   = ["8080"]
     }
 
     tags {

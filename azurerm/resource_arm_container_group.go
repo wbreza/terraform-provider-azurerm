@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/hashicorp/terraform/helper/validation"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
+	"log"
 )
 
 func resourceArmContainerGroup() *schema.Resource {
@@ -73,6 +74,18 @@ func resourceArmContainerGroup() *schema.Resource {
 				Computed: true,
 			},
 
+			"protocol": {
+				Type:             schema.TypeString,
+				Optional:         true,
+				ForceNew:         true,
+				ConflictsWith:    []string{"container.protocol"},
+				DiffSuppressFunc: ignoreCaseDiffSuppressFunc,
+				ValidateFunc: validation.StringInSlice([]string{
+					"tcp",
+					"udp",
+				}, true),
+			},
+
 			"fqdn": {
 				Type:     schema.TypeString,
 				Computed: true,
@@ -114,22 +127,34 @@ func resourceArmContainerGroup() *schema.Resource {
 							ForceNew: true,
 						},
 
-						"port": {
-							Type:         schema.TypeInt,
-							Optional:     true,
-							ForceNew:     true,
-							ValidateFunc: validation.IntBetween(1, 65535),
-						},
-
 						"protocol": {
 							Type:             schema.TypeString,
 							Optional:         true,
 							ForceNew:         true,
+							ConflictsWith:    []string{"protocol"},
+							Deprecated:       "`protocol` applies to entire container group and has been moved to the parent resource",
 							DiffSuppressFunc: ignoreCaseDiffSuppressFunc,
 							ValidateFunc: validation.StringInSlice([]string{
 								"tcp",
 								"udp",
 							}, true),
+						},
+
+						"port": {
+							Type:          schema.TypeInt,
+							Optional:      true,
+							ForceNew:      true,
+							ConflictsWith: []string{"container.ports"},
+							Deprecated:    "`port` has been superseded by `ports`",
+							ValidateFunc:  validation.IntBetween(1, 65535),
+						},
+
+						"ports": {
+							Type:          schema.TypeSet,
+							Optional:      true,
+							ForceNew:      true,
+							ConflictsWith: []string{"container.port"},
+							Elem:          &schema.Schema{Type: schema.TypeInt},
 						},
 
 						"environment_variables": {
@@ -209,8 +234,9 @@ func resourceArmContainerGroupCreate(d *schema.ResourceData, meta interface{}) e
 	IPAddressType := d.Get("ip_address_type").(string)
 	tags := d.Get("tags").(map[string]interface{})
 	restartPolicy := d.Get("restart_policy").(string)
+	protocol := d.Get("protocol").(string)
 
-	containers, containerGroupPorts, containerGroupVolumes := expandContainerGroupContainers(d)
+	containers, containerGroupPorts, containerGroupVolumes := expandContainerGroupContainers(d, protocol)
 	containerGroup := containerinstance.ContainerGroup{
 		Name:     &name,
 		Location: &location,
@@ -253,7 +279,7 @@ func resourceArmContainerGroupCreate(d *schema.ResourceData, meta interface{}) e
 func resourceArmContainerGroupRead(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*ArmClient)
 	ctx := meta.(*ArmClient).StopContext
-	containterGroupsClient := client.containerGroupsClient
+	containerGroupsClient := client.containerGroupsClient
 
 	id, err := parseAzureResourceID(d.Id())
 
@@ -264,7 +290,7 @@ func resourceArmContainerGroupRead(d *schema.ResourceData, meta interface{}) err
 	resGroup := id.ResourceGroup
 	name := id.Path["containerGroups"]
 
-	resp, err := containterGroupsClient.Get(ctx, resGroup, name)
+	resp, err := containerGroupsClient.Get(ctx, resGroup, name)
 
 	if err != nil {
 		if utils.ResponseWasNotFound(resp.Response) {
@@ -285,11 +311,20 @@ func resourceArmContainerGroupRead(d *schema.ResourceData, meta interface{}) err
 		d.Set("ip_address", address.IP)
 		d.Set("dns_name_label", address.DNSNameLabel)
 		d.Set("fqdn", address.Fqdn)
+
+		//protocol can only be TCP/UDP for all ports, so just find the first one that is set
+		if containerPorts := address.Ports; containerPorts != nil {
+			for _, cgPort := range *containerPorts {
+				if p := string(cgPort.Protocol); p != "" {
+					d.Set("protocol", strings.ToLower(p))
+				}
+			}
+		}
 	}
 	d.Set("restart_policy", string(resp.RestartPolicy))
 
 	if props := resp.ContainerGroupProperties; props != nil {
-		containerConfigs := flattenContainerGroupContainers(d, resp.Containers, props.IPAddress.Ports, props.Volumes)
+		containerConfigs := flattenContainerGroupContainers(d, resp.Containers, d.Get("protocol").(string), props.Volumes)
 		err = d.Set("container", containerConfigs)
 		if err != nil {
 			return fmt.Errorf("Error setting `container`: %+v", err)
@@ -302,7 +337,7 @@ func resourceArmContainerGroupRead(d *schema.ResourceData, meta interface{}) err
 func resourceArmContainerGroupDelete(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*ArmClient)
 	ctx := meta.(*ArmClient).StopContext
-	containterGroupsClient := client.containerGroupsClient
+	containerGroupsClient := client.containerGroupsClient
 
 	id, err := parseAzureResourceID(d.Id())
 
@@ -314,7 +349,7 @@ func resourceArmContainerGroupDelete(d *schema.ResourceData, meta interface{}) e
 	resGroup := id.ResourceGroup
 	name := id.Path["containerGroups"]
 
-	resp, err := containterGroupsClient.Delete(ctx, resGroup, name)
+	resp, err := containerGroupsClient.Delete(ctx, resGroup, name)
 	if err != nil {
 		if utils.ResponseWasNotFound(resp.Response) {
 			return nil
@@ -325,7 +360,7 @@ func resourceArmContainerGroupDelete(d *schema.ResourceData, meta interface{}) e
 	return nil
 }
 
-func flattenContainerGroupContainers(d *schema.ResourceData, containers *[]containerinstance.Container, containerGroupPorts *[]containerinstance.Port, containerGroupVolumes *[]containerinstance.Volume) []interface{} {
+func flattenContainerGroupContainers(d *schema.ResourceData, containers *[]containerinstance.Container, protocol string, containerGroupVolumes *[]containerinstance.Volume) []interface{} {
 
 	containerConfigs := make([]interface{}, 0, len(*containers))
 	for _, container := range *containers {
@@ -341,20 +376,16 @@ func flattenContainerGroupContainers(d *schema.ResourceData, containers *[]conta
 		}
 
 		if len(*container.Ports) > 0 {
-			containerPort := *(*container.Ports)[0].Port
-			containerConfig["port"] = containerPort
-			// protocol isn't returned in container config, have to search in container group ports
-			protocol := ""
-			if containerGroupPorts != nil {
-				for _, cgPort := range *containerGroupPorts {
-					if *cgPort.Port == containerPort {
-						protocol = string(cgPort.Protocol)
-					}
-				}
-			}
-			if protocol != "" {
+			containerPorts := make([]interface{}, 0, len(*container.Ports))
+
+			for _, port := range *container.Ports {
+				containerPorts = append(containerPorts, *(port).Port)
+
+				//TODO deprecated property
 				containerConfig["protocol"] = protocol
 			}
+
+			containerConfig["ports"] = containerPorts
 		}
 
 		if container.EnvironmentVariables != nil {
@@ -445,11 +476,14 @@ func flattenContainerVolumes(volumeMounts *[]containerinstance.VolumeMount, cont
 	return volumeConfigs
 }
 
-func expandContainerGroupContainers(d *schema.ResourceData) (*[]containerinstance.Container, *[]containerinstance.Port, *[]containerinstance.Volume) {
+func expandContainerGroupContainers(d *schema.ResourceData, protocol string) (*[]containerinstance.Container, *[]containerinstance.Port, *[]containerinstance.Volume) {
 	containersConfig := d.Get("container").([]interface{})
+
 	containers := make([]containerinstance.Container, 0, len(containersConfig))
 	containerGroupPorts := make([]containerinstance.Port, 0, len(containersConfig))
 	containerGroupVolumes := make([]containerinstance.Volume, 0)
+
+	containerProtocol := containerinstance.ContainerGroupNetworkProtocol(strings.ToUpper(protocol))
 
 	for _, containerConfig := range containersConfig {
 		data := containerConfig.(map[string]interface{})
@@ -473,35 +507,48 @@ func expandContainerGroupContainers(d *schema.ResourceData) (*[]containerinstanc
 			},
 		}
 
-		if v, _ := data["port"]; v != 0 {
-			port := int32(v.(int))
+		containerPorts := make([]containerinstance.ContainerPort, 0, len(containersConfig))
 
+		//TODO will not be needed when deprecated property port is removed
+		addContainerPort := func(port int32, dProtocol interface{}) {
+			log.Printf("[INFO] PORT! %d\n", port)
 			// container port (port number)
-			containerPort := containerinstance.ContainerPort{
+			containerPorts = append(containerPorts, containerinstance.ContainerPort{
 				Port: &port,
-			}
-			container.Ports = &[]containerinstance.ContainerPort{containerPort}
+			})
 
 			// container group port (port number + protocol)
 			containerGroupPort := containerinstance.Port{
-				Port: &port,
+				Port:     &port,
+				Protocol: containerProtocol,
 			}
 
-			if v, ok := data["protocol"]; ok {
-				protocol := v.(string)
-				containerGroupPort.Protocol = containerinstance.ContainerGroupNetworkProtocol(strings.ToUpper(protocol))
+			//set using old container.protocol if containerGroup.protocol is not set
+			if v, _ := data["protocol"].(string); v != "" {
+				containerGroupPort.Protocol = containerinstance.ContainerGroupNetworkProtocol(strings.ToUpper(v))
 			}
 
 			containerGroupPorts = append(containerGroupPorts, containerGroupPort)
 		}
 
+		if v, _ := data["port"]; v != 0 {
+			addContainerPort(int32(v.(int)), data["protocol"])
+		} else if ports, ok := data["ports"]; ok {
+			for _, p := range ports.(*schema.Set).List() {
+				if port := int32(p.(int)); port != 0 {
+					addContainerPort(port, protocol)
+				}
+			}
+		}
+		container.Ports = &containerPorts
+
 		if v, ok := data["environment_variables"]; ok {
 			container.EnvironmentVariables = expandContainerEnvironmentVariables(v)
 		}
 
-		if v, _ := data["command"]; v != "" {
-			command := strings.Split(v.(string), " ")
-			container.Command = &command
+		if v, _ := data["command"].(string); v != "" {
+			command := strings.Split(v, " ")
+			container.Command = &command // container.Command is a []string
 		}
 
 		if v, ok := data["volume"]; ok {
