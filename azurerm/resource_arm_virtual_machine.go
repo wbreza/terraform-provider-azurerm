@@ -25,6 +25,23 @@ func resourceArmVirtualMachine() *schema.Resource {
 			State: schema.ImportStatePassthrough,
 		},
 
+		CustomizeDiff: func(diff *schema.ResourceDiff, v interface{}) error {
+
+			//if OsDisk name changes make sure the vhd_url changes too
+			if diff.HasChange("storage_data_disk.0.name") {
+				old, new := diff.GetChange("storage_data_disk.0.name")
+				oldv, newv := diff.GetChange("storage_data_disk.0.vhd_uri")
+				vhdUrl := diff.Get("storage_data_disk.0.vhd_uri")
+				if old != "" && !diff.HasChange("storage_data_disk.0.vhd_uri") && vhdUrl != "" { //not intial change
+
+					return fmt.Errorf("Unable to change os disk name without also changing vhd_url %s", new, newv, oldv)
+				}
+
+			}
+
+			return nil
+		},
+
 		Schema: map[string]*schema.Schema{
 			"name": {
 				Type:     schema.TypeString,
@@ -247,7 +264,6 @@ func resourceArmVirtualMachine() *schema.Resource {
 						"name": {
 							Type:     schema.TypeString,
 							Required: true,
-							ForceNew: true,
 						},
 
 						"vhd_uri": {
