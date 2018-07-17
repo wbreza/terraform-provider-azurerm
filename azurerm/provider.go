@@ -414,6 +414,7 @@ var armMutexKV = mutexkv.NewMutexKV()
 
 // Deprecated - use `azschema.IgnoreCaseDiffSuppressFunc` instead
 func ignoreCaseDiffSuppressFunc(k, old, new string, d *schema.ResourceData) bool {
+	log.Printf("[INFO] ignoreCaseDiffSuppressFunc: (%q, %q, %q)", k, old, new)
 	return azSchema.IgnoreCaseDiffSuppressFunc(k, old, new, d)
 }
 

@@ -666,6 +666,8 @@ func resourceArmVirtualMachineRead(d *schema.ResourceData, meta interface{}) err
 	resGroup := id.ResourceGroup
 	name := id.Path["virtualMachines"]
 
+	log.Printf("[INFO] Reading Azure ARM Virtual Machine %q (Resource Group %q)", name, resGroup)
+
 	resp, err := vmClient.Get(ctx, resGroup, name, "")
 	if err != nil {
 		if utils.ResponseWasNotFound(resp.Response) {
@@ -694,7 +696,11 @@ func resourceArmVirtualMachineRead(d *schema.ResourceData, meta interface{}) err
 		d.Set("availability_set_id", strings.ToLower(*resp.VirtualMachineProperties.AvailabilitySet.ID))
 	}
 
+	log.Printf("[INFO] Remote VM Size string: %q", resp.VirtualMachineProperties.HardwareProfile.VMSize)
+
 	d.Set("vm_size", resp.VirtualMachineProperties.HardwareProfile.VMSize)
+
+	log.Printf("[INFO] VM Size set to schema: %q", d.Get("vm_size").(string))
 
 	if resp.VirtualMachineProperties.StorageProfile.ImageReference != nil {
 		if err := d.Set("storage_image_reference", schema.NewSet(resourceArmVirtualMachineStorageImageReferenceHash, flattenAzureRmVirtualMachineImageReference(resp.VirtualMachineProperties.StorageProfile.ImageReference))); err != nil {
