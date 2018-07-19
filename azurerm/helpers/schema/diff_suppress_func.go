@@ -14,7 +14,7 @@ func IgnoreCaseDiffSuppressFunc(k, old, new string, d *schema.ResourceData) bool
 	log.Printf("[INFO] k = % x", k)
 	log.Printf("[INFO] old = % x", old)
 	log.Printf("[INFO] new = % x", new)
-	log.Printf("[INFO] strings.ToLower(te%q [old]) = %q", old, strings.ToLower(old))
+	log.Printf("[INFO] strings.ToLower(%q [old]) = %q", old, strings.ToLower(old))
 	log.Printf("[INFO] strings.ToLower(%q [new]) = %q", new, strings.ToLower(new))
 	log.Printf("[INFO] strings.ToLower(old) == strings.ToLower(new)? %v", strings.ToLower(old) == strings.ToLower(new))
 	return strings.ToLower(old) == strings.ToLower(new)
