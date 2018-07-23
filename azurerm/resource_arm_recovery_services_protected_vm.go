@@ -7,12 +7,15 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/services/recoveryservices/mgmt/2016-06-01/backup"
 
+	"time"
+
+	"strings"
+
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/hashicorp/terraform/helper/validation"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
-	"time"
 )
 
 func resourceArmRecoveryServicesProtectedVm() *schema.Resource {
@@ -89,29 +92,32 @@ func resourceArmRecoveryServicesProtectedVMCreateUpdate(d *schema.ResourceData, 
 
 	vaultName := d.Get("recovery_vault_name").(string)
 	vmId := d.Get("source_vm_id").(string)
-	vmName := d.Get("source_vm_id").(string)
+	vmName := d.Get("source_vm_name").(string)
 
 	policyName := d.Get("backup_policy_name").(string)
 
+	protectedItemName := fmt.Sprintf("VM;iaasvmcontainerv2;%s;%s", resourceGroup, vmName)
 	containerName := fmt.Sprintf("iaasvmcontainer;iaasvmcontainerv2;%s;%s", resourceGroup, vmName)
 
 	log.Printf("[DEBUG] Creating/updating Recovery Service Protected Item %q (resource group %q)", name, resourceGroup)
 
-	backupPolicyId := fmt.Sprintf("Subscriptions/%s/resourceGroups/%s/providers/Microsoft.RecoveryServices/vaults/%s/backupPolicies/%s", client.SubscriptionID, resourceGroup, vaultName, policyName)
+	// TODO: support for the Backup Policy Resource - available in the `backup` SDK
+	backupPolicyId := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.RecoveryServices/vaults/%s/backupPolicies/%s", client.SubscriptionID, resourceGroup, vaultName, policyName)
 
 	item := backup.ProtectedItemResource{
 		Location: utils.String(location),
 		Tags:     expandTags(tags),
 		Properties: &backup.AzureIaaSComputeVMProtectedItem{
 			PolicyID:          &backupPolicyId,
-			ProtectedItemType: backup.ProtectedItemType(backup.ProtectedItemTypeMicrosoftComputevirtualMachines),
+			ProtectedItemType: backup.ProtectedItemType(backup.ProtectedItemTypeMicrosoftClassicComputevirtualMachines),
 			WorkloadType:      backup.VM,
-			SourceResourceID:  &vmId,
-			FriendlyName:      &vmName,
+			SourceResourceID:  utils.String(vmId),
+			FriendlyName:      utils.String(vmName),
+			VirtualMachineID:  utils.String(vmId),
 		},
 	}
 
-	if _, err := client.CreateOrUpdate(ctx, vaultName, resourceGroup, "Azure", containerName, containerName, item); err != nil {
+	if _, err := client.CreateOrUpdate(ctx, vaultName, resourceGroup, "Azure", containerName, protectedItemName, item); err != nil {
 		return fmt.Errorf("Error creating/updating Recovery Service Protected Item %q (Resource Group %q): %+v", name, resourceGroup, err)
 	}
 
@@ -123,7 +129,7 @@ func resourceArmRecoveryServicesProtectedVMCreateUpdate(d *schema.ResourceData, 
 		Delay:      10 * time.Second,
 		Refresh: func() (interface{}, string, error) {
 
-			resp, err := client.Get(ctx, vaultName, resourceGroup, "Azure", containerName, name, "")
+			resp, err := client.Get(ctx, vaultName, resourceGroup, "Azure", containerName, protectedItemName, "")
 			if err != nil {
 				if utils.ResponseWasNotFound(resp.Response) {
 					d.SetId("")
@@ -137,12 +143,13 @@ func resourceArmRecoveryServicesProtectedVMCreateUpdate(d *schema.ResourceData, 
 		},
 	}
 
-	resp, errr := stateConf.WaitForState()
-	if errr != nil {
-		return fmt.Errorf("Error waiting for the Recovery Service Protected Item %q (Resource Group %q) to provision: %+v", name, resourceGroup, errr)
+	resp, err := stateConf.WaitForState()
+	if err != nil {
+		return fmt.Errorf("Error waiting for the Recovery Service Protected Item %q (Resource Group %q) to provision: %+v", name, resourceGroup, err)
 	}
 
-	d.SetId(*resp.(backup.ProtectedItemResource).ID)
+	id := strings.Replace(*resp.(backup.ProtectedItemResource).ID, "Subscriptions", "subscriptions", 1)
+	d.SetId(id)
 
 	return resourceArmRecoveryServicesVaultRead(d, meta)
 }
