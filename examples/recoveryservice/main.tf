@@ -19,10 +19,18 @@ module "vm" {
   admin_password  = "Password123!@#"
 }
 
-resource "azurerm_recovery_services_vault" "vault" {
+resource "azurerm_recovery_services_vault" "example" {
   name                = "example-recovery-vault"
   location            = "${azurerm_resource_group.rg.location}"
   resource_group_name = "${azurerm_resource_group.rg.name}"
   sku                 = "Standard"
 }
 
+resource "azurerm_recovery_services_protected_vm" "example" {
+  name                = "example-protected-vm"
+  location            = "${azurerm_resource_group.rg.location}"
+  resource_group_name = "${azurerm_resource_group.rg.name}"
+  recovery_vault_name = "${azurerm_recovery_services_vault.example.name}"
+  source_vm_name      = "${module.vm.vm-name}"
+  source_vm_id        = "${module.vm.vm-id}"
+}

@@ -15,12 +15,12 @@ import (
 	"time"
 )
 
-func resourceArmRecoveryServicesProtectedItem() *schema.Resource {
+func resourceArmRecoveryServicesProtectedVm() *schema.Resource {
 	return &schema.Resource{
-		Create: resourceArmRecoveryServicesProtectedItemCreateUpdate,
-		Read:   resourceArmRecoveryServicesProtectedItemRead,
-		Update: resourceArmRecoveryServicesProtectedItemCreateUpdate,
-		Delete: resourceArmRecoveryServicesProtectedItemDelete,
+		Create: resourceArmRecoveryServicesProtectedVMCreateUpdate,
+		Read:   resourceArmRecoveryServicesProtectedVMRead,
+		Update: resourceArmRecoveryServicesProtectedVMCreateUpdate,
+		Delete: resourceArmRecoveryServicesProtectedVMDelete,
 
 		Importer: &schema.ResourceImporter{
 			State: schema.ImportStatePassthrough,
@@ -51,35 +51,25 @@ func resourceArmRecoveryServicesProtectedItem() *schema.Resource {
 				),
 			},
 
-			"fabric_name": {
-				Type:     schema.TypeString,
-				Required: true,
-				ForceNew: true,
-			},
-
-			"container_name": {
-				Type:     schema.TypeString,
-				Required: true,
-				ForceNew: true,
-			},
-
-			"type": {
-				Type:     schema.TypeString,
-				Required: true,
-				ValidateFunc: validation.StringInSlice([]string{
-					string(backup.ProtectableItemTypeIaaSVMProtectableItem),
-					string(backup.ProtectableItemTypeMicrosoftClassicComputevirtualMachines),
-					string(backup.ProtectableItemTypeMicrosoftComputevirtualMachines),
-					string(backup.ProtectableItemTypeWorkloadProtectableItem),
-				}, true),
-				DiffSuppressFunc: ignoreCaseDiffSuppressFunc,
-			},
-
-			"source_resource_id": {
+			"source_vm_id": {
 				Type:         schema.TypeString,
 				Required:     true,
 				ForceNew:     true,
 				ValidateFunc: azure.ValidateResourceID,
+			},
+
+			"source_vm_name": {
+				Type:         schema.TypeString,
+				Required:     true,
+				ForceNew:     true,
+				ValidateFunc: validation.NoZeroValues,
+			},
+
+			"backup_policy_name": {
+				Type:         schema.TypeString,
+				Optional:     true,
+				Default:      "DefaultPolicy", //every vault comes with a 'DefaultPolicy' by default
+				ValidateFunc: validation.NoZeroValues,
 			},
 
 			"tags": tagsSchema(),
@@ -87,7 +77,8 @@ func resourceArmRecoveryServicesProtectedItem() *schema.Resource {
 	}
 }
 
-func resourceArmRecoveryServicesProtectedItemCreateUpdate(d *schema.ResourceData, meta interface{}) error {
+//Subscriptions/c0a607b2-6372-4ef3-abdb-dbe52a7b56ba/resourceGroups/tfex-recovery_services/providers/Microsoft.RecoveryServices/vaults/example-recovery-vault/backupFabrics/Azure
+func resourceArmRecoveryServicesProtectedVMCreateUpdate(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*ArmClient).recoveryServicesProtectedItemsClient
 	ctx := meta.(*ArmClient).StopContext
 
@@ -97,26 +88,30 @@ func resourceArmRecoveryServicesProtectedItemCreateUpdate(d *schema.ResourceData
 	tags := d.Get("tags").(map[string]interface{})
 
 	vaultName := d.Get("recovery_vault_name").(string)
-	fabricName := d.Get("fabric_name").(string)
-	containerName := d.Get("container_name").(string)
-	itemType := d.Get("type").(string)
-	sourceId := d.Get("source_resource_id").(string)
+	vmId := d.Get("source_vm_id").(string)
+	vmName := d.Get("source_vm_id").(string)
+
+	policyName := d.Get("backup_policy_name").(string)
+
+	containerName := fmt.Sprintf("iaasvmcontainer;iaasvmcontainerv2;%s;%s", resourceGroup, vmName)
 
 	log.Printf("[DEBUG] Creating/updating Recovery Service Protected Item %q (resource group %q)", name, resourceGroup)
+
+	backupPolicyId := fmt.Sprintf("Subscriptions/%s/resourceGroups/%s/providers/Microsoft.RecoveryServices/vaults/%s/backupPolicies/%s", client.SubscriptionID, resourceGroup, vaultName, policyName)
 
 	item := backup.ProtectedItemResource{
 		Location: utils.String(location),
 		Tags:     expandTags(tags),
-		Properties: &backup.ProtectedItem{
-			//PolicyID: &sourceId,
-			ProtectedItemType: backup.ProtectedItemType(itemType),
-			SourceResourceID:  &sourceId,
+		Properties: &backup.AzureIaaSComputeVMProtectedItem{
+			PolicyID:          &backupPolicyId,
+			ProtectedItemType: backup.ProtectedItemType(backup.ProtectedItemTypeMicrosoftComputevirtualMachines),
+			WorkloadType:      backup.VM,
+			SourceResourceID:  &vmId,
+			FriendlyName:      &vmName,
 		},
 	}
 
-	//create recovery services vault
-
-	if _, err := client.CreateOrUpdate(ctx, vaultName, resourceGroup, fabricName, containerName, name, item); err != nil {
+	if _, err := client.CreateOrUpdate(ctx, vaultName, resourceGroup, "Azure", containerName, containerName, item); err != nil {
 		return fmt.Errorf("Error creating/updating Recovery Service Protected Item %q (Resource Group %q): %+v", name, resourceGroup, err)
 	}
 
@@ -125,10 +120,10 @@ func resourceArmRecoveryServicesProtectedItemCreateUpdate(d *schema.ResourceData
 		Target:     []string{"Found"},
 		Timeout:    60 * time.Minute,
 		MinTimeout: 30 * time.Second,
-		Delay:      30 * time.Second, // required because it takes some time before the 'creating' location shows up
+		Delay:      10 * time.Second,
 		Refresh: func() (interface{}, string, error) {
 
-			resp, err := client.Get(ctx, vaultName, resourceGroup, fabricName, containerName, name, "")
+			resp, err := client.Get(ctx, vaultName, resourceGroup, "Azure", containerName, name, "")
 			if err != nil {
 				if utils.ResponseWasNotFound(resp.Response) {
 					d.SetId("")
@@ -156,7 +151,10 @@ func resourceArmRecoveryServicesProtectedItemCreateUpdate(d *schema.ResourceData
 // /tfex-recovery_services/providers/Microsoft.RecoveryServices/vaults/example-recovery-vault/backupFabrics/Azure/protectionContainers/iaasvmcontainer;
 // iaasvmcontainerv2;tfex-recovery_services;tfexrecove407vm/protectedItems/vm;iaasvmcontainerv2;tfex-recovery_services;tfexrecove407vm",
 
-func resourceArmRecoveryServicesProtectedItemRead(d *schema.ResourceData, meta interface{}) error {
+//"protectionContainer": "[concat(']",
+//"protectedItem": "[concat('vm;iaasvmcontainerv2;', resourceGroup().name, ';', variables('vmName'))]"
+
+func resourceArmRecoveryServicesProtectedVMRead(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*ArmClient).recoveryServicesProtectedItemsClient
 	ctx := meta.(*ArmClient).StopContext
 
@@ -165,15 +163,14 @@ func resourceArmRecoveryServicesProtectedItemRead(d *schema.ResourceData, meta i
 		return err
 	}
 
-	name := id.Path["vaults"]
+	name := id.Path["protectedItems"]
 	vaultName := id.Path["vaults"]
-	fabricName := id.Path["backupFabrics"]
-	containerName := id.Path["protectionContainers"]
 	resourceGroup := id.ResourceGroup
+	containerName := id.Path["protectionContainers"]
 
 	log.Printf("[DEBUG] Reading Recovery Service Protected Item %q (resource group %q)", name, resourceGroup)
 
-	resp, err := client.Get(ctx, vaultName, resourceGroup, fabricName, containerName, name, "")
+	resp, err := client.Get(ctx, vaultName, resourceGroup, "Azure", containerName, name, "")
 	if err != nil {
 		if utils.ResponseWasNotFound(resp.Response) {
 			d.SetId("")
@@ -188,13 +185,22 @@ func resourceArmRecoveryServicesProtectedItemRead(d *schema.ResourceData, meta i
 	if location := resp.Location; location != nil {
 		d.Set("location", azureRMNormalizeLocation(*location))
 	}
+	d.Set("recovery_vault_name", vaultName)
+
+	if properties := resp.Properties; properties != nil {
+		if vm, ok := properties.AsAzureIaaSComputeVMProtectedItem(); ok {
+			d.Set("source_vm_id", vm.SourceResourceID)
+			d.Set("source_vm_name", vm.FriendlyName)
+			//d.Set("backup_policy_name", vm.PolicyID) //parse out?
+		}
+	}
 
 	flattenAndSetTags(d, resp.Tags)
 
 	return nil
 }
 
-func resourceArmRecoveryServicesProtectedItemDelete(d *schema.ResourceData, meta interface{}) error {
+func resourceArmRecoveryServicesProtectedVMDelete(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*ArmClient).recoveryServicesProtectedItemsClient
 	ctx := meta.(*ArmClient).StopContext
 
@@ -203,15 +209,14 @@ func resourceArmRecoveryServicesProtectedItemDelete(d *schema.ResourceData, meta
 		return err
 	}
 
-	name := id.Path["vaults"]
-	vaultName := id.Path["vaults"]
-	fabricName := id.Path["backupFabrics"]
-	containerName := id.Path["protectionContainers"]
+	name := id.Path["protectedItems"]
 	resourceGroup := id.ResourceGroup
+	vaultName := id.Path["vaults"]
+	containerName := id.Path["protectionContainers"]
 
 	log.Printf("[DEBUG] Deleting Recovery Service Protected Item %q (resource group %q)", name, resourceGroup)
 
-	resp, err := client.Delete(ctx, vaultName, resourceGroup, fabricName, containerName, name)
+	resp, err := client.Delete(ctx, vaultName, resourceGroup, "Azure", containerName, name)
 	if err != nil {
 		if !utils.ResponseWasNotFound(resp) {
 			return fmt.Errorf("Error issuing delete request for Recovery Service Protected Item %q (Resource Group %q): %+v", name, resourceGroup, err)
