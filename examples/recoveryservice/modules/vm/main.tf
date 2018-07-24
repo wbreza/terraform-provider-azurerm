@@ -58,7 +58,7 @@ resource "azurerm_virtual_machine" "vm" {
   name                  = "${var.prefix}vm"
   location              = "${data.azurerm_resource_group.rg.location}"
   resource_group_name   = "${data.azurerm_resource_group.rg.name}"
-  vm_size               = "Standard_F2"
+  vm_size               = "${var.vm_size}"
   network_interface_ids = ["${azurerm_network_interface.nic.id}"]
 
   storage_image_reference {

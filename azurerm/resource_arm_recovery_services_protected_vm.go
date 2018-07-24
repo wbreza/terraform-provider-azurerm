@@ -1,15 +1,14 @@
 package azurerm
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"regexp"
-
-	"github.com/Azure/azure-sdk-for-go/services/recoveryservices/mgmt/2016-06-01/backup"
-
+	"strings"
 	"time"
 
-	"strings"
+	"github.com/Azure/azure-sdk-for-go/services/recoveryservices/mgmt/2016-06-01/backup"
 
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/helper/schema"
@@ -20,27 +19,18 @@ import (
 
 func resourceArmRecoveryServicesProtectedVm() *schema.Resource {
 	return &schema.Resource{
-		Create: resourceArmRecoveryServicesProtectedVMCreateUpdate,
-		Read:   resourceArmRecoveryServicesProtectedVMRead,
-		Update: resourceArmRecoveryServicesProtectedVMCreateUpdate,
-		Delete: resourceArmRecoveryServicesProtectedVMDelete,
+		Create: resourceArmRecoveryServicesProtectedVmCreateUpdate,
+		Read:   resourceArmRecoveryServicesProtectedVmRead,
+		Update: resourceArmRecoveryServicesProtectedVmCreateUpdate,
+		Delete: resourceArmRecoveryServicesProtectedVmDelete,
 
 		Importer: &schema.ResourceImporter{
 			State: schema.ImportStatePassthrough,
 		},
 
 		Schema: map[string]*schema.Schema{
-			"name": {
-				Type:     schema.TypeString,
-				Required: true,
-				ForceNew: true,
-				/*ValidateFunc: validation.StringMatch(
-					regexp.MustCompile("^[a-zA-Z][-a-zA-Z0-9]{1,49}$"),
-					"Recovery Service Vault name must be 2 - 50 characters long, start with a letter, contain only letters, numbers and hyphens.",
-				),*/
-			},
 
-			"location": locationSchema(),
+			//		"location": locationSchema(),
 
 			"resource_group_name": resourceGroupNameSchema(),
 
@@ -80,13 +70,11 @@ func resourceArmRecoveryServicesProtectedVm() *schema.Resource {
 	}
 }
 
-//Subscriptions/c0a607b2-6372-4ef3-abdb-dbe52a7b56ba/resourceGroups/tfex-recovery_services/providers/Microsoft.RecoveryServices/vaults/example-recovery-vault/backupFabrics/Azure
-func resourceArmRecoveryServicesProtectedVMCreateUpdate(d *schema.ResourceData, meta interface{}) error {
+func resourceArmRecoveryServicesProtectedVmCreateUpdate(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*ArmClient).recoveryServicesProtectedItemsClient
 	ctx := meta.(*ArmClient).StopContext
 
-	name := d.Get("name").(string)
-	location := d.Get("location").(string)
+	//location := d.Get("location").(string)
 	resourceGroup := d.Get("resource_group_name").(string)
 	tags := d.Get("tags").(map[string]interface{})
 
@@ -99,14 +87,14 @@ func resourceArmRecoveryServicesProtectedVMCreateUpdate(d *schema.ResourceData, 
 	protectedItemName := fmt.Sprintf("VM;iaasvmcontainerv2;%s;%s", resourceGroup, vmName)
 	containerName := fmt.Sprintf("iaasvmcontainer;iaasvmcontainerv2;%s;%s", resourceGroup, vmName)
 
-	log.Printf("[DEBUG] Creating/updating Recovery Service Protected Item %q (resource group %q)", name, resourceGroup)
+	log.Printf("[DEBUG] Creating/updating Recovery Service Protected VM %s (resource group %q)", protectedItemName, resourceGroup)
 
 	// TODO: support for the Backup Policy Resource - available in the `backup` SDK
 	backupPolicyId := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.RecoveryServices/vaults/%s/backupPolicies/%s", client.SubscriptionID, resourceGroup, vaultName, policyName)
 
 	item := backup.ProtectedItemResource{
-		Location: utils.String(location),
-		Tags:     expandTags(tags),
+		//Location: utils.String(location),
+		Tags: expandTags(tags),
 		Properties: &backup.AzureIaaSComputeVMProtectedItem{
 			PolicyID:          &backupPolicyId,
 			ProtectedItemType: backup.ProtectedItemType(backup.ProtectedItemTypeMicrosoftClassicComputevirtualMachines),
@@ -118,50 +106,20 @@ func resourceArmRecoveryServicesProtectedVMCreateUpdate(d *schema.ResourceData, 
 	}
 
 	if _, err := client.CreateOrUpdate(ctx, vaultName, resourceGroup, "Azure", containerName, protectedItemName, item); err != nil {
-		return fmt.Errorf("Error creating/updating Recovery Service Protected Item %q (Resource Group %q): %+v", name, resourceGroup, err)
+		return fmt.Errorf("Error creating/updating Recovery Service Protected VM %q (Resource Group %q): %+v", protectedItemName, resourceGroup, err)
 	}
 
-	stateConf := &resource.StateChangeConf{
-		Pending:    []string{"NotFound"},
-		Target:     []string{"Found"},
-		Timeout:    60 * time.Minute,
-		MinTimeout: 30 * time.Second,
-		Delay:      10 * time.Second,
-		Refresh: func() (interface{}, string, error) {
-
-			resp, err := client.Get(ctx, vaultName, resourceGroup, "Azure", containerName, protectedItemName, "")
-			if err != nil {
-				if utils.ResponseWasNotFound(resp.Response) {
-					d.SetId("")
-					return resp, "NotFound", nil
-				}
-
-				return resp, "Error", fmt.Errorf("Error making Read request on Recovery Service Protected Item %q (Resource Group %q): %+v", name, resourceGroup, err)
-			}
-
-			return resp, "Found", nil
-		},
-	}
-
-	resp, err := stateConf.WaitForState()
+	resp, err := resourceArmRecoveryServicesProtectedVmWaitForState(client, ctx, true, vaultName, resourceGroup, containerName, protectedItemName)
 	if err != nil {
-		return fmt.Errorf("Error waiting for the Recovery Service Protected Item %q (Resource Group %q) to provision: %+v", name, resourceGroup, err)
+		return err
 	}
-
-	id := strings.Replace(*resp.(backup.ProtectedItemResource).ID, "Subscriptions", "subscriptions", 1)
+	id := strings.Replace(*resp.ID, "Subscriptions", "subscriptions", 1)
 	d.SetId(id)
 
-	return resourceArmRecoveryServicesVaultRead(d, meta)
+	return resourceArmRecoveryServicesProtectedVmRead(d, meta)
 }
 
-//"id": "/subscriptions/c0a607b2-6372-4ef3-abdb-dbe52a7b56ba/resourceGroups
-// /tfex-recovery_services/providers/Microsoft.RecoveryServices/vaults/example-recovery-vault/backupFabrics/Azure/protectionContainers/iaasvmcontainer;
-// iaasvmcontainerv2;tfex-recovery_services;tfexrecove407vm/protectedItems/vm;iaasvmcontainerv2;tfex-recovery_services;tfexrecove407vm",
-
-//"protectionContainer": "[concat(']",
-//"protectedItem": "[concat('vm;iaasvmcontainerv2;', resourceGroup().name, ';', variables('vmName'))]"
-
-func resourceArmRecoveryServicesProtectedVMRead(d *schema.ResourceData, meta interface{}) error {
+func resourceArmRecoveryServicesProtectedVmRead(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*ArmClient).recoveryServicesProtectedItemsClient
 	ctx := meta.(*ArmClient).StopContext
 
@@ -170,24 +128,23 @@ func resourceArmRecoveryServicesProtectedVMRead(d *schema.ResourceData, meta int
 		return err
 	}
 
-	name := id.Path["protectedItems"]
+	protectedItemName := id.Path["protectedItems"]
 	vaultName := id.Path["vaults"]
 	resourceGroup := id.ResourceGroup
 	containerName := id.Path["protectionContainers"]
 
-	log.Printf("[DEBUG] Reading Recovery Service Protected Item %q (resource group %q)", name, resourceGroup)
+	log.Printf("[DEBUG] Reading Recovery Service Protected VM %q (resource group %q)", protectedItemName, resourceGroup)
 
-	resp, err := client.Get(ctx, vaultName, resourceGroup, "Azure", containerName, name, "")
+	resp, err := client.Get(ctx, vaultName, resourceGroup, "Azure", containerName, protectedItemName, "")
 	if err != nil {
 		if utils.ResponseWasNotFound(resp.Response) {
 			d.SetId("")
 			return nil
 		}
 
-		return fmt.Errorf("Error making Read request on Recovery Service Protected Item %q (Resource Group %q): %+v", name, resourceGroup, err)
+		return fmt.Errorf("Error making Read request on Recovery Service Protected VM %q (Resource Group %q): %+v", protectedItemName, resourceGroup, err)
 	}
 
-	d.Set("name", resp.Name)
 	d.Set("resource_group_name", resourceGroup)
 	if location := resp.Location; location != nil {
 		d.Set("location", azureRMNormalizeLocation(*location))
@@ -198,7 +155,11 @@ func resourceArmRecoveryServicesProtectedVMRead(d *schema.ResourceData, meta int
 		if vm, ok := properties.AsAzureIaaSComputeVMProtectedItem(); ok {
 			d.Set("source_vm_id", vm.SourceResourceID)
 			d.Set("source_vm_name", vm.FriendlyName)
-			//d.Set("backup_policy_name", vm.PolicyID) //parse out?
+
+			if v := vm.PolicyID; v != nil {
+				parts := strings.Split(*v, "/")
+				d.Set("backup_policy_name", parts[len(parts)-1])
+			}
 		}
 	}
 
@@ -207,7 +168,7 @@ func resourceArmRecoveryServicesProtectedVMRead(d *schema.ResourceData, meta int
 	return nil
 }
 
-func resourceArmRecoveryServicesProtectedVMDelete(d *schema.ResourceData, meta interface{}) error {
+func resourceArmRecoveryServicesProtectedVmDelete(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*ArmClient).recoveryServicesProtectedItemsClient
 	ctx := meta.(*ArmClient).StopContext
 
@@ -216,19 +177,59 @@ func resourceArmRecoveryServicesProtectedVMDelete(d *schema.ResourceData, meta i
 		return err
 	}
 
-	name := id.Path["protectedItems"]
+	protectedItemName := id.Path["protectedItems"]
 	resourceGroup := id.ResourceGroup
 	vaultName := id.Path["vaults"]
 	containerName := id.Path["protectionContainers"]
 
-	log.Printf("[DEBUG] Deleting Recovery Service Protected Item %q (resource group %q)", name, resourceGroup)
+	log.Printf("[DEBUG] Deleting Recovery Service Protected Item %q (resource group %q)", protectedItemName, resourceGroup)
 
-	resp, err := client.Delete(ctx, vaultName, resourceGroup, "Azure", containerName, name)
+	resp, err := client.Delete(ctx, vaultName, resourceGroup, "Azure", containerName, protectedItemName)
 	if err != nil {
 		if !utils.ResponseWasNotFound(resp) {
-			return fmt.Errorf("Error issuing delete request for Recovery Service Protected Item %q (Resource Group %q): %+v", name, resourceGroup, err)
+			return fmt.Errorf("Error issuing delete request for Recovery Service Protected VM %q (Resource Group %q): %+v", protectedItemName, resourceGroup, err)
 		}
 	}
 
+	if _, err := resourceArmRecoveryServicesProtectedVmWaitForState(client, ctx, false, vaultName, resourceGroup, containerName, protectedItemName); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func resourceArmRecoveryServicesProtectedVmWaitForState(client backup.ProtectedItemsClient, ctx context.Context, found bool, vaultName, resourceGroup, containerName, protectedItemName string) (backup.ProtectedItemResource, error) {
+	state := &resource.StateChangeConf{
+		Timeout:    30 * time.Minute,
+		MinTimeout: 30 * time.Second,
+		Delay:      10 * time.Second,
+		Refresh: func() (interface{}, string, error) {
+
+			resp, err := client.Get(ctx, vaultName, resourceGroup, "Azure", containerName, protectedItemName, "")
+			if err != nil {
+				if utils.ResponseWasNotFound(resp.Response) {
+					return resp, "NotFound", nil
+				}
+
+				return resp, "Error", fmt.Errorf("Error making Read request on Recovery Service Protected VM %q (Resource Group %q): %+v", protectedItemName, resourceGroup, err)
+			}
+
+			return resp, "Found", nil
+		},
+	}
+
+	if found {
+		state.Pending = []string{"NotFound"}
+		state.Target = []string{"Found"}
+	} else {
+		state.Pending = []string{"Found"}
+		state.Target = []string{"NotFound"}
+	}
+
+	resp, err := state.WaitForState()
+	if err != nil {
+		return resp.(backup.ProtectedItemResource), fmt.Errorf("Error waiting for the Recovery Service Protected VM %q to be %t (Resource Group %q) to provision: %+v", protectedItemName, found, resourceGroup, err)
+	}
+
+	return resp.(backup.ProtectedItemResource), nil
 }

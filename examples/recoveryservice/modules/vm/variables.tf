@@ -4,6 +4,10 @@ variable "resource_group_name" {
   default     = "tfex-recovery_services"
 }
 
+variable "vm_size" {
+  description = "Size of the VM."
+}
+
 variable "prefix" {
   description = "Prefix for some resource names."
 }
