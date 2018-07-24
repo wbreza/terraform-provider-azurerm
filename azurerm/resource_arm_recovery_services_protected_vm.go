@@ -30,8 +30,6 @@ func resourceArmRecoveryServicesProtectedVm() *schema.Resource {
 
 		Schema: map[string]*schema.Schema{
 
-			//		"location": locationSchema(),
-
 			"resource_group_name": resourceGroupNameSchema(),
 
 			"recovery_vault_name": {
@@ -74,14 +72,12 @@ func resourceArmRecoveryServicesProtectedVmCreateUpdate(d *schema.ResourceData, 
 	client := meta.(*ArmClient).recoveryServicesProtectedItemsClient
 	ctx := meta.(*ArmClient).StopContext
 
-	//location := d.Get("location").(string)
 	resourceGroup := d.Get("resource_group_name").(string)
 	tags := d.Get("tags").(map[string]interface{})
 
 	vaultName := d.Get("recovery_vault_name").(string)
 	vmId := d.Get("source_vm_id").(string)
 	vmName := d.Get("source_vm_name").(string)
-
 	policyName := d.Get("backup_policy_name").(string)
 
 	protectedItemName := fmt.Sprintf("VM;iaasvmcontainerv2;%s;%s", resourceGroup, vmName)
@@ -93,7 +89,6 @@ func resourceArmRecoveryServicesProtectedVmCreateUpdate(d *schema.ResourceData, 
 	backupPolicyId := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.RecoveryServices/vaults/%s/backupPolicies/%s", client.SubscriptionID, resourceGroup, vaultName, policyName)
 
 	item := backup.ProtectedItemResource{
-		//Location: utils.String(location),
 		Tags: expandTags(tags),
 		Properties: &backup.AzureIaaSComputeVMProtectedItem{
 			PolicyID:          &backupPolicyId,
@@ -146,9 +141,6 @@ func resourceArmRecoveryServicesProtectedVmRead(d *schema.ResourceData, meta int
 	}
 
 	d.Set("resource_group_name", resourceGroup)
-	if location := resp.Location; location != nil {
-		d.Set("location", azureRMNormalizeLocation(*location))
-	}
 	d.Set("recovery_vault_name", vaultName)
 
 	if properties := resp.Properties; properties != nil {

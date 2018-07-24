@@ -32,7 +32,7 @@ func TestAccAzureRMRecoveryServicesProtectedVm_basic(t *testing.T) {
 				ImportState:       true,
 				ImportStateVerify: true,
 			},
-			{ //vault cannot be deleted unless we stop backing up to it
+			{ //vault cannot be deleted unless we unregister all backups
 				Config: testAccAzureRMRecoveryServicesProtectedVm_base(ri, testLocation()),
 				Check:  resource.ComposeTestCheckFunc(),
 			},
