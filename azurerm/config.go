@@ -378,9 +378,6 @@ func getArmClient(c *authentication.Config) (*ArmClient, error) {
 		}
 	}
 
-
-	log.Printf("AzureRM Client Request Id: %s\n", )
-
 	// client declarations:
 	client := ArmClient{
 		clientId:                 c.ClientID,
