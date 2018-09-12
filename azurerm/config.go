@@ -3,6 +3,7 @@ package azurerm
 import (
 	"context"
 	"fmt"
+	"github.com/hashicorp/go-uuid"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -59,20 +60,12 @@ import (
 	"github.com/Azure/go-autorest/autorest"
 	"github.com/Azure/go-autorest/autorest/adal"
 	"github.com/Azure/go-autorest/autorest/azure"
-	uuid "github.com/hashicorp/go-uuid"
 	"github.com/hashicorp/terraform/terraform"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/authentication"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
 var msClientRequestID = ""
-
-func init() {
-	// Initialize UUID to pass through `x-ms-client-request-id` header.
-	msClientRequestID, _ = uuid.GenerateUUID()
-
-	log.Printf("[DEBUG] AzureRM Client Request Id: %s\n", msClientRequestID)
-}
 
 // ArmClient contains the handles to all the specific Azure Resource Manager
 // resource classes' respective clients.
@@ -377,6 +370,17 @@ func getArmClient(c *authentication.Config) (*ArmClient, error) {
 			return nil, envErr
 		}
 	}
+
+	// Generate UUID to pass through `x-ms-client-request-id` header.
+	if msClientRequestID == "" {
+		var err error
+		msClientRequestID, err = uuid.GenerateUUID()
+		if err != nil {
+			log.Printf("[WARN] Could not generate the UUID for x-ms-client-request-id")
+		}
+	}
+
+	log.Printf("[DEBUG] AzureRM Client Request Id: %s\n", msClientRequestID)
 
 	// client declarations:
 	client := ArmClient{
