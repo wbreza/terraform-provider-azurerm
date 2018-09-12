@@ -60,9 +60,19 @@ import (
 	"github.com/Azure/go-autorest/autorest/adal"
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/hashicorp/terraform/terraform"
+	uuid "github.com/hashicorp/go-uuid"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/authentication"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
+
+var MSClientRequestId = ""
+
+func init() {
+	// Initialize UUID to pass through `x-ms-client-request-id` header.
+	MSClientRequestId, _ = uuid.GenerateUUID()
+
+	log.Printf("[DEBUG] AzureRM Client Request Id: %s\n", MSClientRequestId)
+}
 
 // ArmClient contains the handles to all the specific Azure Resource Manager
 // resource classes' respective clients.
@@ -259,6 +269,7 @@ type ArmClient struct {
 func (c *ArmClient) configureClient(client *autorest.Client, auth autorest.Authorizer) {
 	setUserAgent(client)
 	client.Authorizer = auth
+	client.RequestInspector = azure.WithClientID(MSClientRequestId)
 	client.Sender = autorest.CreateSender(withRequestLogging())
 	client.SkipResourceProviderRegistration = c.skipProviderRegistration
 	client.PollingDuration = 60 * time.Minute
@@ -366,6 +377,9 @@ func getArmClient(c *authentication.Config) (*ArmClient, error) {
 			return nil, envErr
 		}
 	}
+
+
+	log.Printf("AzureRM Client Request Id: %s\n", )
 
 	// client declarations:
 	client := ArmClient{
